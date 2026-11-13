@@ -1,18 +1,44 @@
-// Read-only board: columns in `tix status` order, a task panel, polling. Styles are spike A as is.
+// Board: columns in `tix status` order, drag and drop through `tix move`, a task panel, polling.
+// Styles are spike A as is. After every write the board is read again: tix decides, the page shows.
 // Task text reaches the DOM as text, except body and feed HTML that the server renders without raw HTML.
 import { h, render } from "preact";
-import { useState, useEffect, useCallback } from "preact/hooks";
+import { useState, useEffect, useCallback, useRef } from "preact/hooks";
 import htm from "htm";
 
 const html = htm.bind(h);
 const POLL_MS = 5000;
 const CLOSED_LIMIT = 12;
+const NOTICE_MS = 6000;
+
+// drag.active holds the board poll while a card is in the air: a redraw mid-drag loses the drop.
+const drag = { active: false };
 
 async function getJSON(url) {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
+}
+
+async function postJSON(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (res.ok) return;
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  throw new Error(data.error || `HTTP ${res.status}`);
+}
+
+// moveBody asks what tix needs for the target kind; null means the owner cancelled.
+// Closed keeps tix placement (the end, shown first); other columns keep the drop position.
+function moveBody(kind, after) {
+  if (kind === "blocked") {
+    const reason = prompt("Причина блокировки");
+    return reason ? { message: reason, ...(after ? { after } : { first: true }) } : null;
+  }
+  if (kind === "closed") {
+    const result = prompt("Итог (можно оставить пустым)");
+    return result === null ? null : { message: result };
+  }
+  return after ? { after } : { first: true };
 }
 
 // usePoll runs load now, every POLL_MS while the tab is visible, and when the tab comes back.
@@ -66,12 +92,34 @@ function App() {
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState(null);
   const [more, setMore] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(
-    () => getJSON("/api/board").then((b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
+    () =>
+      drag.active
+        ? Promise.resolve()
+        : getJSON("/api/board").then((b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
     [],
   );
   usePoll(load);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const id = setTimeout(() => setNotice(""), NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [notice]);
+
+  async function move(id, status, after) {
+    const kind = board.statuses.find((s) => s.name === status)?.kind;
+    const body = moveBody(kind, after);
+    if (!body) return;
+    try {
+      await postJSON(`/api/tasks/${encodeURIComponent(id)}/move`, { status, ...body });
+    } catch (err) {
+      setNotice(err.message);
+    }
+    await load();
+  }
 
   useEffect(() => {
     const key = (e) => e.key === "Escape" && setOpenId(null);
@@ -84,21 +132,45 @@ function App() {
   else if (board.tasks.length === 0) body = html`<p class="tag empty">Задач нет. Заведите первую: tix new "заголовок"</p>`;
   else
     body = html`<div class="board">${board.statuses.map((s) => html`<${Column} key=${s.name} status=${s}
-      ...${columnTasks(board.tasks, s, more)} onMore=${() => setMore(true)} onOpen=${setOpenId} />`)}</div>`;
+      ...${columnTasks(board.tasks, s, more)} onMore=${() => setMore(true)} onOpen=${setOpenId} onMove=${move} />`)}</div>`;
 
   return html`<div class="main">
     <header class="top"><h1>Доска</h1><span class="spacer"></span>
       ${board && html`<span class="tag">${board.tasks.length} задач, опрос раз в 5 с</span>`}</header>
     ${body}
     ${openId && html`<${Panel} key=${openId} id=${openId} statuses=${board?.statuses || []} onClose=${() => setOpenId(null)} />`}
-    ${error && html`<div class="toasts"><div class="toast bad">${error}</div></div>`}
+    ${(error || notice) && html`<div class="toasts">
+      ${error && html`<div class="toast bad">${error}</div>`}${notice && html`<div class="toast bad">${notice}</div>`}</div>`}
   </div>`;
 }
 
-function Column({ status, shown, total, onMore, onOpen }) {
-  return html`<div class="col" data-status=${status.name}>
+function Column({ status, shown, total, onMore, onOpen, onMove }) {
+  const list = useRef();
+  const handler = useRef();
+  handler.current = onMove;
+  useEffect(() => {
+    // Fallback mode with the copy on body: native drag hides the card or lags behind the pointer.
+    const sortable = Sortable.create(list.current, {
+      group: "board", animation: 180, draggable: ".card", ghostClass: "ghost",
+      forceFallback: true, fallbackClass: "lifted", fallbackTolerance: 4, fallbackOnBody: true,
+      onStart: () => { drag.active = true; },
+      onEnd(e) {
+        drag.active = false;
+        const ids = [...e.to.querySelectorAll(".card")].map((el) => el.dataset.id);
+        const i = ids.indexOf(e.item.dataset.id);
+        const col = e.to.closest(".col");
+        // Sortable moved the node itself: put it back and let Preact draw what tix answers.
+        e.item.remove();
+        e.from.insertBefore(e.item, e.from.children[e.oldIndex] || null);
+        if (e.from === e.to && (e.oldIndex === e.newIndex || col.dataset.kind === "closed")) return;
+        handler.current(e.item.dataset.id, col.dataset.status, i > 0 ? ids[i - 1] : "");
+      },
+    });
+    return () => sortable.destroy();
+  }, []);
+  return html`<div class="col" data-status=${status.name} data-kind=${status.kind}>
     <div class="col-head"><span class=${"dot " + status.kind}></span>${status.name}<span class="n">${total}</span></div>
-    <div class="cards">
+    <div class="cards" ref=${list}>
       ${shown.map((t) => html`<${Card} key=${t.id} t=${t} onOpen=${onOpen} />`)}
       ${total > shown.length && html`<button class="more" onClick=${onMore}>ещё ${total - shown.length}</button>`}
     </div>

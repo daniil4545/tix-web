@@ -224,3 +224,85 @@ func TestParseRefusesUnknownFormat(t *testing.T) {
 		t.Error("project without count parsed")
 	}
 }
+
+func post(t *testing.T, h http.Handler, path, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+	req.Host = "127.0.0.1:8737"
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestMoveRunsTix(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		args string
+	}{
+		{`{"status":"open","after":"T-3"}`, "move\nT-7\nopen\n--as\nhuman\n--after\nT-3\n--\n"},
+		{`{"status":"open","first":true}`, "move\nT-7\nopen\n--as\nhuman\n--first\n--\n"},
+		{`{"status":"blocked","first":true,"message":"-waits on x"}`, "move\nT-7\nblocked\n--as\nhuman\n--first\n-m\n-waits on x\n--\n"},
+		{`{"status":"closed","message":"done"}`, "move\nT-7\nclosed\n--as\nhuman\n-m\ndone\n--\n"},
+	} {
+		tix, log := fakeTix(t)
+		rec := post(t, newServer(tix, "8737"), "/api/tasks/T-7/move", tc.body, nil)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("%s: %d %s", tc.body, rec.Code, rec.Body)
+		}
+		if args, _ := os.ReadFile(log); string(args) != tc.args {
+			t.Errorf("%s: tix args %q, want %q", tc.body, args, tc.args)
+		}
+	}
+}
+
+func TestMoveRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		path, body string
+		code       int
+		msg        string
+	}{
+		{"/api/tasks/T-409/move", `{"status":"closed","message":"x"}`, http.StatusConflict, "err T-409: 0/1 criteria checked; run: tix check T-409 1"},
+		{"/api/tasks/T-7/move", `{"status":"--force"}`, http.StatusBadRequest, `err T-7: bad status "--force"`},
+		{"/api/tasks/T-7/move", `{"status":"open","after":"--first"}`, http.StatusBadRequest, `err T-7: after "--first": want T-N and no first`},
+		{"/api/tasks/T-7/move", `{"status":"open","after":"T-3","first":true}`, http.StatusBadRequest, `err T-7: after "T-3": want T-N and no first`},
+		{"/api/tasks/--as/move", `{"status":"open"}`, http.StatusBadRequest, "err --as: not a task id, want T-N"},
+	} {
+		tix, log := fakeTix(t)
+		rec := post(t, newServer(tix, "8737"), tc.path, tc.body, nil)
+		var got struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != tc.code || got.Error != tc.msg {
+			t.Errorf("%s %s: %d %q, want %d %q", tc.path, tc.body, rec.Code, got.Error, tc.code, tc.msg)
+		}
+		if args, _ := os.ReadFile(log); tc.code == http.StatusBadRequest && len(args) > 0 {
+			t.Errorf("%s: tix ran on a bad request: %q", tc.body, args)
+		}
+	}
+}
+
+// spec: R2
+func TestCrossOriginWriteRefused(t *testing.T) {
+	for _, hdr := range []map[string]string{
+		{"Origin": "http://evil.example"},
+		{"Sec-Fetch-Site": "cross-site"},
+	} {
+		tix, log := fakeTix(t)
+		rec := post(t, newServer(tix, "8737"), "/api/tasks/T-7/move", `{"status":"open"}`, hdr)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%v: %d, want 403", hdr, rec.Code)
+		}
+		if args, _ := os.ReadFile(log); len(args) > 0 {
+			t.Errorf("%v: tix ran: %q", hdr, args)
+		}
+	}
+	tix, _ := fakeTix(t)
+	same := map[string]string{"Origin": "http://127.0.0.1:8737", "Sec-Fetch-Site": "same-origin"}
+	if rec := post(t, newServer(tix, "8737"), "/api/tasks/T-7/move", `{"status":"open"}`, same); rec.Code != http.StatusNoContent {
+		t.Errorf("same origin: %d %s", rec.Code, rec.Body)
+	}
+}

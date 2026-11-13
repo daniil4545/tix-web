@@ -24,6 +24,12 @@ show)
   esac
   printf '{"id":"%s","path":"/home/u/tasks/x.md","body":"## Abstract\\n\\nhi <script>alert(1)</script> [x](javascript:alert(1))","notes":[{"text":"<img src=x onerror=alert(1)> **done**"}],"comments":[]}\n' "$2"
   ;;
+move)
+  case "$2" in
+  T-409) echo "err T-409: 0/1 criteria checked; run: tix check T-409 1" >&2; exit 5 ;;
+  esac
+  echo "ok $2 moved"
+  ;;
 *)
   echo "err unknown command $1" >&2
   exit 6
