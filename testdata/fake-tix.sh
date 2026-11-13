@@ -30,6 +30,16 @@ move)
   esac
   echo "ok $2 moved"
   ;;
+edit)
+  case "$2" in
+  T-410) echo "err T-410: edit conflict: body changed after tix show, reread and retry" >&2; exit 3 ;;
+  esac
+  if [ -n "$FAKE_TIX_LOG" ]; then printf 'stdin:' >>"$FAKE_TIX_LOG"; cat >>"$FAKE_TIX_LOG"; fi
+  echo "ok $2 edit"
+  ;;
+set | check | uncheck | comment)
+  echo "ok $2 $1"
+  ;;
 *)
   echo "err unknown command $1" >&2
   exit 6

@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -27,6 +29,7 @@ var (
 	taskID = regexp.MustCompile(`^T-[0-9]+$`)
 	// statusName keeps a status from being read as a flag; tix checks the rest.
 	statusName = regexp.MustCompile(`^[^-\s]\S*$`)
+	revHash    = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 )
 
 // maxBody bounds a write request; the largest is a task body.
@@ -52,6 +55,11 @@ func newServer(tix tixCLI, port string) http.Handler {
 	mux.HandleFunc("GET /api/board", s.board)
 	mux.HandleFunc("GET /api/tasks/{id}", s.task)
 	mux.HandleFunc("POST /api/tasks/{id}/move", s.move)
+	mux.HandleFunc("PATCH /api/tasks/{id}", s.set)
+	mux.HandleFunc("PUT /api/tasks/{id}", s.edit)
+	mux.HandleFunc("POST /api/tasks/{id}/check", s.check("check"))
+	mux.HandleFunc("POST /api/tasks/{id}/uncheck", s.check("uncheck"))
+	mux.HandleFunc("POST /api/tasks/{id}/comment", s.comment)
 	// Writes from another origin are refused by Sec-Fetch-Site or Origin against Host.
 	return s.checkHost(http.NewCrossOriginProtection().Handler(mux))
 }
@@ -178,6 +186,93 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-m", req.Message)
 	}
 	s.write(w, r, "", args...)
+}
+
+type setReq struct {
+	Title *string `json:"title"`
+	Tags  *string `json:"tags"`
+}
+
+// set runs `tix set` for the fields present; tags are one comma-separated string, as tix takes them.
+func (s *server) set(w http.ResponseWriter, r *http.Request) {
+	var req setReq
+	id, ok := decode(w, r, &req)
+	if !ok {
+		return
+	}
+	args := []string{"set", id}
+	if req.Title != nil {
+		args = append(args, "title="+*req.Title)
+	}
+	if req.Tags != nil {
+		args = append(args, "tags="+*req.Tags)
+	}
+	if len(args) == 2 {
+		writeErr(w, badRequest("err "+id+": nothing to set, want title or tags"))
+		return
+	}
+	s.write(w, r, "", append(args, "--as", "human")...)
+}
+
+type editReq struct {
+	Rev  string `json:"rev"`
+	Body string `json:"body"`
+}
+
+// edit replaces the body with `tix edit --base rev`; a body changed since rev is a tix conflict (409).
+func (s *server) edit(w http.ResponseWriter, r *http.Request) {
+	var req editReq
+	id, ok := decode(w, r, &req)
+	if !ok {
+		return
+	}
+	if !revHash.MatchString(req.Rev) {
+		writeErr(w, badRequest(fmt.Sprintf("err %s: bad rev %q", id, req.Rev)))
+		return
+	}
+	if req.Body == "" {
+		writeErr(w, badRequest("err "+id+": empty body"))
+		return
+	}
+	s.write(w, r, req.Body, "edit", id, "--base", req.Rev, "--as", "human")
+}
+
+type checkReq struct {
+	N int `json:"n"`
+}
+
+// check returns the handler of `tix check` or `tix uncheck` for one criterion number.
+func (s *server) check(cmd string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req checkReq
+		id, ok := decode(w, r, &req)
+		if !ok {
+			return
+		}
+		if req.N < 1 {
+			writeErr(w, badRequest(fmt.Sprintf("err %s: criterion %d, want 1 or more", id, req.N)))
+			return
+		}
+		s.write(w, r, "", cmd, id, strconv.Itoa(req.N), "--as", "human")
+	}
+}
+
+type commentReq struct {
+	Text string `json:"text"`
+}
+
+// comment adds a human comment, the instruction an agent reads; "--" keeps a text with a dash a text.
+func (s *server) comment(w http.ResponseWriter, r *http.Request) {
+	var req commentReq
+	id, ok := decode(w, r, &req)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		writeErr(w, badRequest("err "+id+": empty comment"))
+		return
+	}
+	s.write(w, r, "", "comment", id, "--as", "human", "--", req.Text)
 }
 
 // decode reads the JSON body into v and returns the task id of the path; a bad request is answered
