@@ -1,0 +1,52 @@
+# GitHub flow: a PR into main and a push to main run ci-check; task branches get no run.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a PR cancels the old run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TIX_VERSION: 0.9.1
+      TIX_SHA256: e4bf69930e2b0128aed3e7844b926910b539110026e622b6777f1e1d22162a1a
+    steps:
+      # Full history: pr-size and test-guard read the merge base with main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          install-only: true
+      # uvx and npx run the linters of scripts/lint-files.sh.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # The e2e test runs the released tix, checked against its published sum.
+      - name: install tix
+        run: |
+          f="tix_${TIX_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "$f" "https://github.com/daniil4545/tix/releases/download/v${TIX_VERSION}/$f"
+          echo "$TIX_SHA256  $f" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$f" -C "$HOME/.local/bin" tix
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: ci-check
+        env:
+          BASE: origin/main
+        run: make ci-check
