@@ -8,7 +8,8 @@ First release: the minimal path of a task in the browser over tix 0.9.1.
 
 - Board on 127.0.0.1:8737: columns in `tix status` order, cards with tags, claim, last note and epic
   progress, polling every 5 s. Closed shows the newest 12 first.
-- Task panel: the body as Markdown, notes and comments in one feed, the PR link.
+- Task panel in the middle of the screen: the body as Markdown, notes and comments in one feed, the PR link.
+  An epic lists its children with progress; a child opens in the panel and links back to its epic.
 - Drag and drop through `tix move`: a reason for blocked, a result for closed; a tix refusal shows its
   text and the card goes back.
 - Editing in the panel: title, tags, body with an edit conflict that keeps the owner's text, criteria
