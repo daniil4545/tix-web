@@ -20,6 +20,7 @@ show)
   T-409) echo "err T-409: rule says no" >&2; exit 5 ;;
   T-410) echo "err T-410: changed since rev abc" >&2; exit 3 ;;
   T-500) echo "boom" >&2; exit 1 ;;
+  T-hang) exec sleep 5 ;;
   esac
   printf '{"id":"%s","path":"/home/u/tasks/x.md","body":"## Abstract\\n\\nhi <script>alert(1)</script> [x](javascript:alert(1))","notes":[{"text":"<img src=x onerror=alert(1)> **done**"}],"comments":[]}\n' "$2"
   ;;

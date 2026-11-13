@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // tixCLI runs the tix binary. It never builds a shell line: arguments go to exec as an array.
@@ -46,12 +47,18 @@ func (t tixCLI) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, t.bin, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	// A child of tix (git) may hold the pipes after tix is killed on timeout.
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err == nil {
 		return out, nil
 	}
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
-		return nil, &tixError{Code: exit.ExitCode(), Msg: strings.TrimSpace(stderr.String())}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" { // killed on timeout or a closed request: tix said nothing
+			msg = fmt.Sprintf("tix %s: %v", strings.Join(args, " "), errors.Join(err, ctx.Err()))
+		}
+		return nil, &tixError{Code: exit.ExitCode(), Msg: msg}
 	}
 	return nil, fmt.Errorf("run %s: %w", t.bin, err)
 }

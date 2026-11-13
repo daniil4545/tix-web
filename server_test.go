@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain points TIX_HOME at a temporary folder, so no test can reach ~/tasks (R5).
@@ -180,6 +183,17 @@ func TestArgsReachTixAsArray(t *testing.T) {
 	args, _ := os.ReadFile(log)
 	if want := "list\n" + arg + "\n--\n"; string(args) != want {
 		t.Errorf("args %q, want %q", args, want)
+	}
+}
+
+func TestKilledTixHasText(t *testing.T) {
+	tix, _ := fakeTix(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, err := tix.run(ctx, "show", "T-hang")
+	te, ok := errors.AsType[*tixError](err)
+	if !ok || te.Msg == "" || te.httpStatus() != http.StatusInternalServerError {
+		t.Errorf("killed tix: %#v", err)
 	}
 }
 
