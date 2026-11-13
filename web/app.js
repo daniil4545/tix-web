@@ -188,8 +188,8 @@ function App() {
       <span class="spacer"></span>
       ${board && html`<span class="tag">${board.tasks.length} задач, опрос раз в 5 с</span>`}</header>
     ${body}
-    ${openId && html`<${Panel} key=${openId} id=${openId} statuses=${board?.statuses || []}
-      onClose=${() => setOpenId(null)} onChanged=${load} onNotice=${setNotice} />`}
+    ${openId && html`<${Panel} key=${openId} id=${openId} statuses=${board?.statuses || []} tasks=${board?.tasks || []}
+      onOpen=${setOpenId} onClose=${() => setOpenId(null)} onChanged=${load} onNotice=${setNotice} />`}
     ${creating && html`<${NewTask} board=${board} onClose=${() => setCreating(false)}
       onCreated=${(id) => { setCreating(false); setOpenId(id); load(); }} />`}
     ${(error || notice) && html`<div class="toasts">
@@ -268,7 +268,7 @@ const stopEsc = (e, cancel) => {
 
 const focus = (el) => el && document.activeElement !== el && el.focus();
 
-function Panel({ id, statuses, onClose, onChanged, onNotice }) {
+function Panel({ id, statuses, tasks, onOpen, onClose, onChanged, onNotice }) {
   const [t, setT] = useState(null);
   const [error, setError] = useState("");
   const [title, setTitle] = useState(null); // the draft while the title is edited
@@ -288,12 +288,14 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
     if (t && md.current) markCriteria(md.current, t.body);
   });
 
-  // An unsaved body or comment is not lost to Esc, a click outside or the close button.
-  const close = () => {
+  // An unsaved body or comment is not lost to Esc, a click outside, the close button or a jump to another task.
+  const leave = (next) => {
     const dirty = (draft && draft.body !== t?.body) || comment.trim();
     if (dirty && !confirm("Закрыть? Несохранённый текст пропадёт")) return;
-    onClose();
+    next();
   };
+  const close = () => leave(onClose);
+  const go = (to) => leave(() => onOpen(to));
   useEsc(close);
 
   // change sends one write; a refusal goes to the toast. The task and the board are read again either way.
@@ -347,16 +349,23 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
     change("POST", e.target.checked ? "/check" : "/uncheck", { n: Number(n) });
   };
 
-  const kind = t && statuses.find((s) => s.name === t.status)?.kind;
+  const kindOf = (name) => statuses.find((s) => s.name === name)?.kind;
+  const kind = t && kindOf(t.status);
   const items = t ? feed(t) : [];
+  // Children come from the polled board, closed ones last; the counts come from tix show.
+  const kids = tasks.filter((x) => x.parent === id);
+  kids.sort((a, b) => (kindOf(a.status) === "closed") - (kindOf(b.status) === "closed"));
+  const parent = t?.parent && tasks.find((x) => x.id === t.parent);
   return html`<div>
     <div class="scrim" onClick=${close}></div>
     <div class="panel">
-      <div class="panel-head"><span class="mono">${id}</span>${t?.parent && html`<span>· в эпике ${t.parent}</span>`}
+      <div class="panel-head"><span class="mono">${id}</span>
         <button class="x" onClick=${close} title="Закрыть (Esc)">×</button></div>
       ${error && html`<div class="panel-head">${error}</div>`}
       ${t && html`<div class="panel-body">
         <div class="doc">
+          ${t.parent && html`<button class="crumb" onClick=${() => go(t.parent)}>в эпике <span class="mono">${t.parent}</span>
+            ${parent?.title}</button>`}
           ${title === null
             ? html`<h1 class="t editable" title="Изменить заголовок" onClick=${() => setTitle(t.title)}>${t.title}</h1>`
             : html`<input class="t-input" ref=${focus} value=${title} onInput=${(e) => setTitle(e.target.value)}
@@ -374,6 +383,10 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
                 </div></div>`
             : html`<div class="md" ref=${md} onClick=${onBodyClick} dangerouslySetInnerHTML=${{ __html: t.body_html }}></div>
                 <div class="actions"><button class="btn" onClick=${() => setDraft({ body: t.body, rev: t.rev })}>Править</button></div>`}
+          ${kids.length > 0 && html`<div class="feed-title">Подзадачи <${Progress} t=${t} /></div>
+            <div class="kids">${kids.map((k) => html`<button class="kid" key=${k.id} data-id=${k.id} onClick=${() => go(k.id)}>
+              <span class=${"dot " + kindOf(k.status)}></span><span class="mono">${k.id}</span>
+              <span class="kid-title">${k.title}</span><span class="kid-project">${k.project}</span></button>`)}</div>`}
           <div class="feed-title">Активность <span class="n">${items.length}</span></div>
           <div class="feed">${items.map((it) => html`<div class=${"item " + it.type}>
             <span class="av">${who(it.actor)[0].toUpperCase()}</span>

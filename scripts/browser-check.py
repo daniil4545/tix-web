@@ -294,6 +294,32 @@ def create(page: Page, title: str, status: str, body: str | None = None) -> None
     page.locator('.new-task button:text-is("Создать")').click()
 
 
+def check_epic(page: Page, env: dict, out: Path) -> list[str]:
+    """An epic shows its children with progress; a child opens in the panel and leads back."""
+    failed: list[str] = []
+    epic = tix(env, "new", "browser-check epic", "--to", "idea", "--project", "tix-web").split()[1]
+    kid = tix(env, "new", "browser-check child", "--to", "idea", "--project", "tix-web", "--parent", epic)
+    kid = kid.split()[1]
+    if wait(page, f'.card[data-id="{epic}"]') == "never":
+        return [f"epic {epic} not on the board"]
+    page.locator(f'.card[data-id="{epic}"]').click()
+    try:
+        page.wait_for_selector(f'.panel .kid[data-id="{kid}"]', timeout=4000)
+        progress = page.locator(".panel .feed-title .progress").inner_text()
+        if "0/1" not in progress:
+            failed.append(f"epic progress {progress!r}, want 0/1")
+        page.screenshot(path=out / "epic.png")
+        page.locator(f'.panel .kid[data-id="{kid}"]').click()
+        page.wait_for_selector(f'.panel .panel-head .mono:text-is("{kid}")', timeout=4000)
+        page.locator(".panel .crumb").click()
+        page.wait_for_selector(f'.panel .panel-head .mono:text-is("{epic}")', timeout=4000)
+    except PlaywrightTimeout:
+        failed.append(f"epic {epic}: no child {kid} in the panel, or no way there and back")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    return failed
+
+
 def check_new(page: Page, out: Path) -> list[str]:
     failed: list[str] = []
     for title, status in (("browser-check new idea", "idea"), ("browser-check new open", "open")):
@@ -384,6 +410,7 @@ def check(url: str, env: dict, out: Path) -> int:
             failed.append(f"{moved} moved by tix did not show within {POLL_S}s")
         failed += check_moves(page, url, ids, out)
         failed += check_edits(page, url, env, ids, out)
+        failed += check_epic(page, env, out)
         failed += check_new(page, out)
         browser.close()
     failed += [f"console: {e}" for e in errors]
