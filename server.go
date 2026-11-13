@@ -279,10 +279,7 @@ func (s *server) comment(w http.ResponseWriter, r *http.Request) {
 // with 400 and false.
 func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
 	id := r.PathValue("id")
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		writeErr(w, badRequest("err: request body: "+err.Error()))
+	if !decodeBody(w, r, v) {
 		return "", false
 	}
 	if !taskID.MatchString(id) {
@@ -290,6 +287,17 @@ func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+// decodeBody reads the JSON body into v; a bad one is answered with 400 and false.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeErr(w, badRequest("err: request body: "+err.Error()))
+		return false
+	}
+	return true
 }
 
 // write runs one tix change and answers 204, or passes the tix refusal on.
