@@ -46,8 +46,13 @@ func (t tixCLI) run(ctx context.Context, args ...string) ([]byte, error) {
 	return t.runInput(ctx, "", args...)
 }
 
+// tixTimeout bounds one tix call; a read of 750 tasks takes tens of milliseconds.
+const tixTimeout = 10 * time.Second
+
 // runInput runs tix with stdin; an empty stdin is none.
 func (t tixCLI) runInput(ctx context.Context, stdin string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, tixTimeout)
+	defer cancel()
 	//nolint:gosec // bin is the operator's -tix flag; args go to exec as an array, no shell
 	cmd := exec.CommandContext(ctx, t.bin, args...)
 	if stdin != "" {

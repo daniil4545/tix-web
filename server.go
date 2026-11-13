@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -22,14 +20,11 @@ import (
 //go:embed web
 var webFS embed.FS
 
-// tixTimeout bounds one tix call; a read of 750 tasks takes tens of milliseconds.
-const tixTimeout = 10 * time.Second
-
 var (
 	taskID = regexp.MustCompile(`^T-[0-9]+$`)
-	// statusName keeps a status from being read as a flag; tix checks the rest.
-	statusName = regexp.MustCompile(`^[^-\s]\S*$`)
-	revHash    = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	// plainArg keeps a status or project from being read as a flag; tix checks the rest.
+	plainArg = regexp.MustCompile(`^[^-\s]\S*$`)
+	revHash  = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 	// created reads the id from the answer of `tix new`: "ok T-12 idea".
 	created = regexp.MustCompile(`^ok (T-[0-9]+) `)
 )
@@ -80,8 +75,7 @@ func (s *server) checkHost(next http.Handler) http.Handler {
 }
 
 func (s *server) board(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
-	defer cancel()
+	ctx := r.Context()
 	out, err := s.tix.run(ctx, "status")
 	if err != nil {
 		writeErr(w, err)
@@ -118,14 +112,11 @@ func (s *server) board(w http.ResponseWriter, r *http.Request) {
 
 // task passes `tix show -v --json` through and adds HTML of the body, notes and comments.
 func (s *server) task(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !taskID.MatchString(id) {
-		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
+	id, ok := pathID(w, r)
+	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
-	defer cancel()
-	out, err := s.tix.run(ctx, "show", id, "-v", "--json")
+	out, err := s.tix.run(r.Context(), "show", id, "-v", "--json")
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -171,7 +162,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case !statusName.MatchString(req.Status):
+	case !plainArg.MatchString(req.Status):
 		writeErr(w, badRequest(fmt.Sprintf("err %s: bad status %q", id, req.Status)))
 		return
 	case req.After != "" && (!taskID.MatchString(req.After) || req.First):
@@ -210,10 +201,10 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	case title == "":
 		writeErr(w, badRequest("err: empty title"))
 		return
-	case !statusName.MatchString(req.Project):
+	case !plainArg.MatchString(req.Project):
 		writeErr(w, badRequest(fmt.Sprintf("err: bad project %q", req.Project)))
 		return
-	case !statusName.MatchString(req.Status):
+	case !plainArg.MatchString(req.Status):
 		writeErr(w, badRequest(fmt.Sprintf("err: bad status %q", req.Status)))
 		return
 	}
@@ -221,9 +212,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Body) != "" {
 		args = append(args, "--body-file", "-")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
-	defer cancel()
-	out, err := s.tix.runInput(ctx, req.Body, append(args, "--", title)...)
+	out, err := s.tix.runInput(r.Context(), req.Body, append(args, "--", title)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -327,10 +316,15 @@ func (s *server) comment(w http.ResponseWriter, r *http.Request) {
 // decode reads the JSON body into v and returns the task id of the path; a bad request is answered
 // with 400 and false.
 func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
-	id := r.PathValue("id")
 	if !decodeBody(w, r, v) {
 		return "", false
 	}
+	return pathID(w, r)
+}
+
+// pathID returns the task id of the path; a bad one is answered with 400 and false.
+func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := r.PathValue("id")
 	if !taskID.MatchString(id) {
 		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
 		return "", false
@@ -351,9 +345,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // write runs one tix change and answers 204, or passes the tix refusal on.
 func (s *server) write(w http.ResponseWriter, r *http.Request, stdin string, args ...string) {
-	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
-	defer cancel()
-	if _, err := s.tix.runInput(ctx, stdin, args...); err != nil {
+	if _, err := s.tix.runInput(r.Context(), stdin, args...); err != nil {
 		writeErr(w, err)
 		return
 	}
