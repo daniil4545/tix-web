@@ -23,7 +23,14 @@ var webFS embed.FS
 // tixTimeout bounds one tix call; a read of 750 tasks takes tens of milliseconds.
 const tixTimeout = 10 * time.Second
 
-var taskID = regexp.MustCompile(`^T-[0-9]+$`)
+var (
+	taskID = regexp.MustCompile(`^T-[0-9]+$`)
+	// statusName keeps a status from being read as a flag; tix checks the rest.
+	statusName = regexp.MustCompile(`^[^-\s]\S*$`)
+)
+
+// maxBody bounds a write request; the largest is a task body.
+const maxBody = 1 << 20
 
 // md renders task text written by agents. Without html.WithUnsafe goldmark drops raw HTML and
 // dangerous link schemes, so a <script> in a task never reaches the page.
@@ -44,7 +51,9 @@ func newServer(tix tixCLI, port string) http.Handler {
 	mux.Handle("GET /", http.FileServerFS(web))
 	mux.HandleFunc("GET /api/board", s.board)
 	mux.HandleFunc("GET /api/tasks/{id}", s.task)
-	return s.checkHost(mux)
+	mux.HandleFunc("POST /api/tasks/{id}/move", s.move)
+	// Writes from another origin are refused by Sec-Fetch-Site or Origin against Host.
+	return s.checkHost(http.NewCrossOriginProtection().Handler(mux))
 }
 
 // checkHost refuses a Host other than the bound loopback address: a DNS rebinding page
@@ -100,7 +109,7 @@ func (s *server) board(w http.ResponseWriter, r *http.Request) {
 func (s *server) task(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !taskID.MatchString(id) {
-		writeErr(w, &tixError{Code: 6, Msg: "err " + id + ": not a task id, want T-N"})
+		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
@@ -134,6 +143,59 @@ func (s *server) task(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+type moveReq struct {
+	Status  string `json:"status"`
+	After   string `json:"after"`
+	First   bool   `json:"first"`
+	Message string `json:"message"`
+}
+
+// move runs `tix move`: after a card, first in the column, or at its end when neither is set.
+func (s *server) move(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req moveReq
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeErr(w, badRequest("err: request body: "+err.Error()))
+		return
+	}
+	switch {
+	case !taskID.MatchString(id):
+		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
+		return
+	case !statusName.MatchString(req.Status):
+		writeErr(w, badRequest(fmt.Sprintf("err %s: bad status %q", id, req.Status)))
+		return
+	case req.After != "" && (!taskID.MatchString(req.After) || req.First):
+		writeErr(w, badRequest(fmt.Sprintf("err %s: after %q: want T-N and no first", id, req.After)))
+		return
+	}
+	args := []string{"move", id, req.Status, "--as", "human"}
+	switch {
+	case req.After != "":
+		args = append(args, "--after", req.After)
+	case req.First:
+		args = append(args, "--first")
+	}
+	if req.Message != "" {
+		args = append(args, "-m", req.Message)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
+	defer cancel()
+	if _, err := s.tix.run(ctx, args...); err != nil {
+		writeErr(w, err)
+		return
+	}
+	slog.Info("task moved", "id", id, "status", req.Status)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// badRequest is a refusal of the server itself, shaped like a tix usage error (exit 6, HTTP 400).
+func badRequest(msg string) *tixError {
+	return &tixError{Code: 6, Msg: msg}
 }
 
 func render(v any) (string, error) {

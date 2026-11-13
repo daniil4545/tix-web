@@ -94,3 +94,36 @@ func TestE2ERealTixReadOnly(t *testing.T) {
 		t.Errorf("missing task: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// spec: R4
+func TestE2EMessageNeverBecomesFlag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e runs real tix; the fast tier skips it")
+	}
+	tix := realTix(t)
+	t.Setenv("TIX_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	seed := exec.CommandContext(t.Context(), tix.bin, "new", "e2e task", "--project", "demo", "--body-file", "-", "--as", "human")
+	seed.Stdin = strings.NewReader("## Details\n\n- [ ] one\n")
+	if out, err := seed.CombinedOutput(); err != nil {
+		t.Fatalf("seed: %v: %s", err, out)
+	}
+	h := newServer(tix, "8737")
+
+	// "--force" as a result must stay text: the unchecked criterion still refuses the close.
+	if rec := post(t, h, "/api/tasks/T-1/move", `{"status":"closed","message":"--force"}`, nil); rec.Code != http.StatusConflict {
+		t.Errorf("close with --force text: %d %s", rec.Code, rec.Body)
+	}
+	if rec := post(t, h, "/api/tasks/T-1/move", `{"status":"blocked","first":true,"message":"--first"}`, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("block: %d %s", rec.Code, rec.Body)
+	}
+	var task struct {
+		Status  string `json:"status"`
+		Waiting string `json:"waiting"`
+	}
+	rec := get(t, h, "127.0.0.1:8737", "/api/tasks/T-1")
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil || task.Status != "blocked" || task.Waiting != "--first" {
+		t.Errorf("after block: %+v %v %s", task, err, rec.Body)
+	}
+}
