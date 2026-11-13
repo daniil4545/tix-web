@@ -9,7 +9,7 @@ status)
   printf 'idea         idea         1\nopen         open         1\n'
   ;;
 projects)
-  printf 'shop   /home/u/shop   1\nall    -    0   not in catalog\n'
+  printf 'shop   /home/u/shop   1\nall    -    0   not in catalog   \n'
   ;;
 list)
   printf '[{"id":"T-1","title":"Buy milk","project":"shop","status":"open","path":"/home/u/tasks/T-1.md"}]\n'
@@ -36,6 +36,17 @@ edit)
   esac
   if [ -n "$FAKE_TIX_LOG" ]; then printf 'stdin:' >>"$FAKE_TIX_LOG"; cat >>"$FAKE_TIX_LOG"; fi
   echo "ok $2 edit"
+  ;;
+new)
+  for a in "$@"; do last=$a; done
+  case "$last" in
+  refuse) echo "err a new task has no criteria; pass a body with \`- [ ]\` lines under ## Details" >&2; exit 5 ;;
+  odd) echo "created" ; exit 0 ;;
+  esac
+  case " $* " in
+  *" --body-file - "*) [ -z "$FAKE_TIX_LOG" ] || { printf 'stdin:' >>"$FAKE_TIX_LOG"; cat >>"$FAKE_TIX_LOG"; } ;;
+  esac
+  echo "ok T-42 idea"
   ;;
 set | check | uncheck | comment)
   echo "ok $2 $1"

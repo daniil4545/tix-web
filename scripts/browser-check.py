@@ -8,7 +8,8 @@ closes, a `tix note` and a `tix move` in the same TIX_HOME show within one poll,
 moves cards through tix: within a column (no prompt in blocked), between columns, into blocked with a reason or cancelled,
 into closed with a result, and a tix refusal shows as a toast with the card back in place; the panel
 edits title, tags, criteria and the body (a CLI edit meanwhile is a conflict that keeps the owner's
-text) and sends a comment.
+text) and sends a comment; a new task is created in idea and in open, and open without criteria is
+refused in the form with the input kept.
 
 Usage: scripts/browser-check.py [TASKS_DIR] (default ~/tasks; it is cloned, never written).
 Screenshots go to the temporary folder printed at the end.
@@ -273,6 +274,45 @@ def check_edits(page: Page, url: str, env: dict, ids: dict[str, str], out: Path)
     return failed
 
 
+def create(page: Page, title: str, status: str, body: str | None = None) -> None:
+    page.locator('.top button:text-is("Новая задача")').click()
+    page.locator(".new-task .t-input").fill(title)
+    page.locator(".new-task select").nth(1).select_option(status)
+    if body is not None:
+        page.locator(".new-task textarea.editor").fill(body)
+    page.locator('.new-task button:text-is("Создать")').click()
+
+
+def check_new(page: Page, out: Path) -> list[str]:
+    failed: list[str] = []
+    for title, status in (("browser-check new idea", "idea"), ("browser-check new open", "open")):
+        create(page, title, status)
+        try:
+            page.wait_for_selector(f'.panel h1.t:text-is("{title}")', timeout=4000)
+            page.wait_for_selector(
+                f'.col[data-status="{status}"] .card:has-text("{title}")', timeout=4000
+            )
+        except PlaywrightTimeout:
+            failed.append(f"new task in {status}: no panel or card")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+
+    create(page, "browser-check refused", "open", "## Abstract\n\nno criteria\n")
+    try:
+        warn = page.wait_for_selector(".new-task .warn", timeout=4000).inner_text()
+    except PlaywrightTimeout:
+        warn = ""
+    page.screenshot(path=out / "new-refused.png")
+    if (
+        "no criteria" not in warn
+        or page.locator(".new-task .t-input").input_value() != "browser-check refused"
+    ):
+        failed.append(f"open without criteria: warning {warn!r}, title kept in the form")
+    page.once("dialog", lambda d: d.accept())
+    page.keyboard.press("Escape")
+    return failed
+
+
 def check(url: str, env: dict, out: Path) -> int:
     ids = seed(env)
     with urllib.request.urlopen(url + "/api/board") as r:  # noqa: S310 - the local server started above
@@ -333,6 +373,7 @@ def check(url: str, env: dict, out: Path) -> int:
             failed.append(f"{moved} moved by tix did not show within {POLL_S}s")
         failed += check_moves(page, url, ids, out)
         failed += check_edits(page, url, env, ids, out)
+        failed += check_new(page, out)
         browser.close()
     failed += [f"console: {e}" for e in errors]
     print(

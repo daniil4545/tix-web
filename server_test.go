@@ -62,7 +62,8 @@ func TestBoard(t *testing.T) {
 	if len(got.Statuses) != 2 || got.Statuses[1] != (statusRow{Name: "open", Kind: "open", Count: 1}) {
 		t.Errorf("statuses %+v", got.Statuses)
 	}
-	if len(got.Projects) != 2 || got.Projects[0] != (projectRow{Name: "shop", Count: 1}) || got.Projects[1].Count != 0 {
+	if len(got.Projects) != 2 || got.Projects[0] != (projectRow{Name: "shop", Count: 1, Catalog: true}) ||
+		got.Projects[1] != (projectRow{Name: "all", Count: 0}) {
 		t.Errorf("projects %+v", got.Projects)
 	}
 	if len(got.Tasks) != 1 || string(got.Tasks[0]["id"]) != `"T-1"` {
@@ -361,6 +362,53 @@ func TestWriteRefusals(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &got)
 		if rec.Code != tc.code || got.Error != tc.msg {
 			t.Errorf("%s %s: %d %q, want %d %q", tc.method, tc.body, rec.Code, got.Error, tc.code, tc.msg)
+		}
+		if args, _ := os.ReadFile(log); tc.code == http.StatusBadRequest && len(args) > 0 {
+			t.Errorf("%s: tix ran on a bad request: %q", tc.body, args)
+		}
+	}
+}
+
+func TestCreate(t *testing.T) {
+	tix, log := fakeTix(t)
+	rec := send(t, newServer(tix, "8737"), http.MethodPost, "/api/tasks",
+		`{"title":" -dash title ","project":"shop","status":"open","body":"## Details\n\n- [ ] one\n"}`)
+	if rec.Code != http.StatusCreated || strings.TrimSpace(rec.Body.String()) != `{"id":"T-42"}` {
+		t.Errorf("create: %d %s", rec.Code, rec.Body)
+	}
+	want := "new\n--project\nshop\n--to\nopen\n--as\nhuman\n--body-file\n-\n--\n-dash title\n--\nstdin:## Details\n\n- [ ] one\n"
+	if args, _ := os.ReadFile(log); string(args) != want {
+		t.Errorf("tix args %q, want %q", args, want)
+	}
+
+	tix, log = fakeTix(t)
+	rec = send(t, newServer(tix, "8737"), http.MethodPost, "/api/tasks", `{"title":"idea only","project":"shop","status":"idea","body":"  "}`)
+	if args, _ := os.ReadFile(log); rec.Code != http.StatusCreated || string(args) != "new\n--project\nshop\n--to\nidea\n--as\nhuman\n--\nidea only\n--\n" {
+		t.Errorf("create without body: %d %s %q", rec.Code, rec.Body, args)
+	}
+}
+
+func TestCreateRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		code int
+		msg  string
+	}{
+		{`{"title":"refuse","project":"shop","status":"open"}`, http.StatusConflict, "err a new task has no criteria; pass a body with `- [ ]` lines under ## Details"},
+		{`{"title":"odd","project":"shop","status":"idea"}`, http.StatusInternalServerError, `tix new: unexpected answer "created\n"`},
+		{`{"title":"  ","project":"shop","status":"idea"}`, http.StatusBadRequest, "err: empty title"},
+		{`{"title":"x","project":"--to","status":"idea"}`, http.StatusBadRequest, `err: bad project "--to"`},
+		{`{"title":"x","project":"shop","status":""}`, http.StatusBadRequest, `err: bad status ""`},
+		{`{"title":"x","project":"shop","status":"idea","parent":"T-1"}`, http.StatusBadRequest, `err: request body: json: unknown field "parent"`},
+	} {
+		tix, log := fakeTix(t)
+		rec := send(t, newServer(tix, "8737"), http.MethodPost, "/api/tasks", tc.body)
+		var got struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != tc.code || got.Error != tc.msg {
+			t.Errorf("%s: %d %q, want %d %q", tc.body, rec.Code, got.Error, tc.code, tc.msg)
 		}
 		if args, _ := os.ReadFile(log); tc.code == http.StatusBadRequest && len(args) > 0 {
 			t.Errorf("%s: tix ran on a bad request: %q", tc.body, args)
