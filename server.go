@@ -154,18 +154,12 @@ type moveReq struct {
 
 // move runs `tix move`: after a card, first in the column, or at its end when neither is set.
 func (s *server) move(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
 	var req moveReq
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeErr(w, badRequest("err: request body: "+err.Error()))
+	id, ok := decode(w, r, &req)
+	if !ok {
 		return
 	}
 	switch {
-	case !taskID.MatchString(id):
-		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
-		return
 	case !statusName.MatchString(req.Status):
 		writeErr(w, badRequest(fmt.Sprintf("err %s: bad status %q", id, req.Status)))
 		return
@@ -183,13 +177,35 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	if req.Message != "" {
 		args = append(args, "-m", req.Message)
 	}
+	s.write(w, r, "", args...)
+}
+
+// decode reads the JSON body into v and returns the task id of the path; a bad request is answered
+// with 400 and false.
+func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
+	id := r.PathValue("id")
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeErr(w, badRequest("err: request body: "+err.Error()))
+		return "", false
+	}
+	if !taskID.MatchString(id) {
+		writeErr(w, badRequest("err "+id+": not a task id, want T-N"))
+		return "", false
+	}
+	return id, true
+}
+
+// write runs one tix change and answers 204, or passes the tix refusal on.
+func (s *server) write(w http.ResponseWriter, r *http.Request, stdin string, args ...string) {
 	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
 	defer cancel()
-	if _, err := s.tix.run(ctx, args...); err != nil {
+	if _, err := s.tix.runInput(ctx, stdin, args...); err != nil {
 		writeErr(w, err)
 		return
 	}
-	slog.Info("task moved", "id", id, "status", req.Status)
+	slog.Info("task changed", "cmd", args[0], "id", args[1])
 	w.WriteHeader(http.StatusNoContent)
 }
 
