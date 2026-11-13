@@ -218,3 +218,11 @@ textarea.compose { display: block; width: 100%; min-height: 64px; resize: vertic
 .btn:disabled { opacity: 0.5; cursor: default; transform: none; }
 .warn { color: var(--bad); margin: 8px 0 0; }
 .md input[data-n] { cursor: pointer; }
+
+/* tix-web: new task form */
+.new-task .doc { display: flex; flex-direction: column; gap: 10px; }
+.new-task .t-input { margin: 0; }
+.new-task label.prop { display: flex; flex-direction: column; gap: 3px; color: var(--faint); font-size: 11.5px; }
+.new-task select { font: inherit; font-size: 13px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+.new-task select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.top .btn { font-size: 12.5px; }

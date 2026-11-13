@@ -5,8 +5,8 @@ A local web board for the [tix](https://github.com/daniil4545/tix) task tracker:
 
 ## Stage
 
-Prototype. Works: the board with a task panel that polls every 5 s, moving cards through `tix move`, and
-editing a task in the panel. Coming next: new tasks.
+Prototype. Works the whole minimal path in the browser: create a task, edit it in the panel, move it on
+the board, close it; the board polls every 5 s.
 
 ## Quick start
 
@@ -26,8 +26,9 @@ Tests and linters: `make check`. The full test tier needs tix 0.9.1; `make test-
 
 | Request | tix call |
 |---|---|
-| `GET /api/board` | `tix status`, `tix projects`, `tix list --all --json --project ""` |
+| `GET /api/board` | `tix status`, `tix projects` (with `catalog`: false for a project tix new refuses), `tix list --all --json --project ""` |
 | `GET /api/tasks/T-N` | `tix show T-N -v --json`, plus `body_html` and `html` of each note and comment |
+| `POST /api/tasks` `{title, project, status, body}` | `tix new --project P --to S --as human [--body-file -] -- TITLE`; answers 201 `{"id"}` |
 | `POST /api/tasks/T-N/move` `{status, after, first, message}` | `tix move T-N STATUS --as human [--after T-M \| --first] [-m MESSAGE]`; no placement keeps the tix default, the end of the column |
 | `PATCH /api/tasks/T-N` `{title, tags}` | `tix set T-N title=... tags=... --as human`; tags are one comma-separated string |
 | `PUT /api/tasks/T-N` `{rev, body}` | `tix edit T-N --base REV --as human` with the body on stdin; a changed body is exit 3, HTTP 409 |

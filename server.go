@@ -30,6 +30,8 @@ var (
 	// statusName keeps a status from being read as a flag; tix checks the rest.
 	statusName = regexp.MustCompile(`^[^-\s]\S*$`)
 	revHash    = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	// created reads the id from the answer of `tix new`: "ok T-12 idea".
+	created = regexp.MustCompile(`^ok (T-[0-9]+) `)
 )
 
 // maxBody bounds a write request; the largest is a task body.
@@ -54,6 +56,7 @@ func newServer(tix tixCLI, port string) http.Handler {
 	mux.Handle("GET /", http.FileServerFS(web))
 	mux.HandleFunc("GET /api/board", s.board)
 	mux.HandleFunc("GET /api/tasks/{id}", s.task)
+	mux.HandleFunc("POST /api/tasks", s.create)
 	mux.HandleFunc("POST /api/tasks/{id}/move", s.move)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.set)
 	mux.HandleFunc("PUT /api/tasks/{id}", s.edit)
@@ -188,6 +191,52 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	s.write(w, r, "", args...)
 }
 
+type newReq struct {
+	Title   string `json:"title"`
+	Project string `json:"project"`
+	Status  string `json:"status"`
+	Body    string `json:"body"`
+}
+
+// create runs `tix new` and answers 201 with the new id. Flags go before "--", so a title with a
+// leading dash stays a title.
+func (s *server) create(w http.ResponseWriter, r *http.Request) {
+	var req newReq
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	switch {
+	case title == "":
+		writeErr(w, badRequest("err: empty title"))
+		return
+	case !statusName.MatchString(req.Project):
+		writeErr(w, badRequest(fmt.Sprintf("err: bad project %q", req.Project)))
+		return
+	case !statusName.MatchString(req.Status):
+		writeErr(w, badRequest(fmt.Sprintf("err: bad status %q", req.Status)))
+		return
+	}
+	args := []string{"new", "--project", req.Project, "--to", req.Status, "--as", "human"}
+	if strings.TrimSpace(req.Body) != "" {
+		args = append(args, "--body-file", "-")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), tixTimeout)
+	defer cancel()
+	out, err := s.tix.runInput(ctx, req.Body, append(args, "--", title)...)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	m := created.FindSubmatch(out)
+	if m == nil {
+		writeErr(w, fmt.Errorf("tix new: unexpected answer %q", out))
+		return
+	}
+	slog.Info("task created", "id", string(m[1]), "project", req.Project)
+	writeJSON(w, http.StatusCreated, map[string]string{"id": string(m[1])})
+}
+
 type setReq struct {
 	Title *string `json:"title"`
 	Tags  *string `json:"tags"`
@@ -279,10 +328,7 @@ func (s *server) comment(w http.ResponseWriter, r *http.Request) {
 // with 400 and false.
 func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
 	id := r.PathValue("id")
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		writeErr(w, badRequest("err: request body: "+err.Error()))
+	if !decodeBody(w, r, v) {
 		return "", false
 	}
 	if !taskID.MatchString(id) {
@@ -290,6 +336,17 @@ func decode(w http.ResponseWriter, r *http.Request, v any) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+// decodeBody reads the JSON body into v; a bad one is answered with 400 and false.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeErr(w, badRequest("err: request body: "+err.Error()))
+		return false
+	}
+	return true
 }
 
 // write runs one tix change and answers 204, or passes the tix refusal on.

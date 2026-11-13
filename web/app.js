@@ -140,6 +140,7 @@ function App() {
   const [openId, setOpenId] = useState(null);
   const [more, setMore] = useState(false);
   const [notice, setNotice] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const seq = useRef(0);
   const load = useCallback(
@@ -178,11 +179,15 @@ function App() {
       ...${columnTasks(board.tasks, s, more)} onMore=${() => setMore(true)} onOpen=${setOpenId} onMove=${move} />`)}</div>`;
 
   return html`<div class="main">
-    <header class="top"><h1>Доска</h1><span class="spacer"></span>
+    <header class="top"><h1>Доска</h1>
+      ${board && html`<button class="btn primary" onClick=${() => setCreating(true)}>Новая задача</button>`}
+      <span class="spacer"></span>
       ${board && html`<span class="tag">${board.tasks.length} задач, опрос раз в 5 с</span>`}</header>
     ${body}
     ${openId && html`<${Panel} key=${openId} id=${openId} statuses=${board?.statuses || []}
       onClose=${() => setOpenId(null)} onChanged=${load} onNotice=${setNotice} />`}
+    ${creating && html`<${NewTask} board=${board} onClose=${() => setCreating(false)}
+      onCreated=${(id) => { setCreating(false); setOpenId(id); load(); }} />`}
     ${(error || notice) && html`<div class="toasts">
       ${error && html`<div class="toast bad">${error}</div>`}${notice && html`<div class="toast bad">${notice}</div>`}</div>`}
   </div>`;
@@ -394,6 +399,68 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
           <div class="prop"><label>Создана</label><div>${t.created.slice(0, 10)}</div></div>
         </div>
       </div>`}
+    </div>
+  </div>`;
+}
+
+// The ticket template of ~/tasks/RULES.md; tix needs the "## Details" heading as is.
+const TEMPLATE = "## Abstract\n\nЧто за задача и зачем.\n\n## Details\n\n- [ ] Первый критерий\n";
+
+// NewTask creates a task with `tix new`. A refusal shows the tix text in the form, and the input stays.
+function NewTask({ board, onClose, onCreated }) {
+  const projects = [...new Set([...board.projects.filter((p) => p.catalog).map((p) => p.name), "personal"])].sort();
+  const statuses = board.statuses.filter((s) => s.kind === "idea" || s.kind === "open");
+  const [form, setForm] = useState({ title: "", project: "personal", status: statuses[0]?.name || "idea", body: TEMPLATE });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const field = (name) => (e) => setForm({ ...form, [name]: e.target.value });
+
+  const close = () => {
+    const dirty = form.title.trim() || form.body !== TEMPLATE;
+    if (!dirty || confirm("Закрыть без создания задачи?")) onClose();
+  };
+  useEffect(() => {
+    const key = (e) => e.key === "Escape" && close();
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  });
+
+  async function submit() {
+    if (busy || !form.title.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      onCreated(data.id);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const submitKey = (e) => (e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.repeat && submit();
+
+  return html`<div>
+    <div class="scrim" onClick=${close}></div>
+    <div class="panel new-task" onKeyDown=${submitKey}>
+      <div class="panel-head"><span>Новая задача</span><button class="x" onClick=${close} title="Закрыть (Esc)">×</button></div>
+      <div class="doc">
+        <input class="t-input" ref=${focus} placeholder="Заголовок" value=${form.title} onInput=${field("title")} />
+        <div class="actions">
+          <label class="prop"><span>Проект</span>
+            <select value=${form.project} onChange=${field("project")}>${projects.map((p) => html`<option value=${p}>${p}</option>`)}</select></label>
+          <label class="prop"><span>Статус</span>
+            <select value=${form.status} onChange=${field("status")}>${statuses.map((s) => html`<option value=${s.name}>${s.name}</option>`)}</select></label>
+        </div>
+        <textarea class="editor" value=${form.body} onInput=${field("body")}></textarea>
+        ${error && html`<p class="warn">${error}</p>`}
+        <div class="actions">
+          <button class="btn primary" disabled=${busy || !form.title.trim()} onClick=${submit}>Создать</button>
+          <button class="btn" onClick=${close}>Отмена</button>
+          <span class="tag">Cmd+Enter создаёт. В open нужны критерии под ## Details</span>
+        </div>
+      </div>
     </div>
   </div>`;
 }

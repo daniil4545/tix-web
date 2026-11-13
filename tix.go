@@ -78,8 +78,9 @@ type statusRow struct {
 }
 
 type projectRow struct {
-	Name  string `json:"name"`
-	Count int    `json:"count"`
+	Name    string `json:"name"`
+	Count   int    `json:"count"`
+	Catalog bool   `json:"catalog"` // false: only tasks mention it, tix new refuses it
 }
 
 // parseStatuses reads `tix status`: name, kind and count per line. tix 0.9.1 has no --json there.
@@ -116,7 +117,7 @@ func parseProjects(out []byte) ([]projectRow, error) {
 		if len(f) == 0 {
 			continue
 		}
-		row := projectRow{Name: f[0], Count: -1}
+		row := projectRow{Name: f[0], Count: -1, Catalog: !strings.HasSuffix(strings.TrimSpace(sc.Text()), "not in catalog")}
 		for _, s := range f[1:] {
 			if n, err := strconv.Atoi(s); err == nil {
 				row.Count = n
