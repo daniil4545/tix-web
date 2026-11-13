@@ -16,10 +16,16 @@ async function getJSON(url) {
 }
 
 // usePoll runs load now, every POLL_MS while the tab is visible, and when the tab comes back.
+// One request at a time: a slow tix answer can neither overlap nor overwrite a newer one.
 function usePoll(load) {
   useEffect(() => {
-    load();
-    const tick = () => document.hidden || load();
+    let busy = false;
+    const tick = () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      load().finally(() => { busy = false; });
+    };
+    tick();
     const id = setInterval(tick, POLL_MS);
     document.addEventListener("visibilitychange", tick);
     return () => {
@@ -46,7 +52,8 @@ function claimText(claim) {
   return until ? `${who(claim)}, до ${until[1]}` : who(claim);
 }
 
-// columnTasks keeps tix order; closed shows the most recently closed first, which tix lists last.
+// columnTasks keeps tix order. tix 0.9.1 has no close time, but `tix move` without --after or --first
+// puts a task at the end of its column, so closed shows the end of the list reversed.
 function columnTasks(tasks, status, more) {
   const own = tasks.filter((t) => t.status === status.name);
   if (status.kind !== "closed") return { shown: own, total: own.length };
@@ -83,7 +90,7 @@ function App() {
     <header class="top"><h1>Доска</h1><span class="spacer"></span>
       ${board && html`<span class="tag">${board.tasks.length} задач, опрос раз в 5 с</span>`}</header>
     ${body}
-    ${openId && html`<${Panel} id=${openId} statuses=${board?.statuses || []} onClose=${() => setOpenId(null)} />`}
+    ${openId && html`<${Panel} key=${openId} id=${openId} statuses=${board?.statuses || []} onClose=${() => setOpenId(null)} />`}
     ${error && html`<div class="toasts"><div class="toast bad">${error}</div></div>`}
   </div>`;
 }

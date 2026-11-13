@@ -21,8 +21,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
-from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 POLL_S = 5
@@ -43,10 +43,32 @@ def main() -> int:
     )
     try:
         assert server.stdout is not None  # noqa: S101 - stdout=PIPE above
-        url = server.stdout.readline().split()[-1]
-        return check(url, env, tmp)
+        line = server.stdout.readline()
+        if not line:
+            print("FAIL tix-web exited before printing its address")
+            return 1
+        return check(line.split()[-1], env, tmp)
     finally:
         server.terminate()
+
+
+def tix(env: dict, *args: str) -> None:
+    """Run tix in the cloned store; a refusal stops the check with the tix text."""
+    r = subprocess.run(
+        ["tix", *args, "--as", "human"], env=env, capture_output=True, text=True, check=False
+    )
+    if r.returncode:
+        raise SystemExit(f"FAIL tix {' '.join(args)}: exit {r.returncode}: {r.stderr.strip()}")
+
+
+def wait(page: Page, selector: str) -> str:
+    """Seconds until selector shows, or "never" after one poll and a margin."""
+    start = time.monotonic()
+    try:
+        page.wait_for_selector(selector, timeout=(POLL_S + 1.5) * 1000)
+    except PlaywrightTimeout:
+        return "never"
+    return f"{time.monotonic() - start:.1f}s"
 
 
 def check(url: str, env: dict, out: Path) -> int:
@@ -71,11 +93,18 @@ def check(url: str, env: dict, out: Path) -> int:
         if closed and page.locator(f'.col[data-status="{closed[0]}"] .card').count() > 12:
             failed.append("closed column shows more than 12 cards")
 
-        page.locator(".card:has(.note)").first.click()
+        # The open panel re-reads its task: a note added by tix shows without a reload.
+        card = page.locator(".card:has(.note)").first
+        noted = card.get_attribute("data-id")
+        card.click()
         page.wait_for_selector(".panel .md", timeout=3000)
         page.wait_for_timeout(300)
         page.screenshot(path=out / "task.png")
         feed = page.locator(".panel .item").count()
+        tix(env, "note", noted, "browser-check note")
+        note_seen = wait(page, f".panel .item:nth-child({feed + 1})")
+        if note_seen == "never":
+            failed.append(f"note on {noted} did not show in the open panel within {POLL_S}s")
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
         if page.locator(".panel").count():
@@ -83,25 +112,18 @@ def check(url: str, env: dict, out: Path) -> int:
 
         # Move an open task back to idea in the same store and wait for the board to show it.
         open_ids = [t["id"] for t in board["tasks"] if t["status"] == "open"]
+        if not open_ids:
+            raise SystemExit("FAIL the store has no open task to move")
         moved = open_ids[0]
-        subprocess.run(
-            ["tix", "move", moved, "idea", "--as", "human"],
-            env=env,
-            check=True,
-            capture_output=True,
-        )
-        start = time.monotonic()
-        try:
-            page.wait_for_selector(
-                f'.col[data-status="idea"] .card[data-id="{moved}"]', timeout=(POLL_S + 1.5) * 1000
-            )
-            seen = f"{time.monotonic() - start:.1f}s"
-        except PlaywrightTimeout:
-            seen = "never"
+        tix(env, "move", moved, "idea")
+        seen = wait(page, f'.col[data-status="idea"] .card[data-id="{moved}"]')
+        if seen == "never":
             failed.append(f"{moved} moved by tix did not show within {POLL_S}s")
         browser.close()
     failed += [f"console: {e}" for e in errors]
-    print(f"cols={cols} feed={feed} moved={moved} seen_after={seen} screenshots={out}")
+    print(
+        f"cols={cols} note_seen_after={note_seen} moved={moved} move_seen_after={seen} screenshots={out}"
+    )
     for f in failed:
         print("FAIL", f)
     return 1 if failed else 0
