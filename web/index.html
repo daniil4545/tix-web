@@ -1,15 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="description" content="Local board of the tix task tracker">
-        <title>tix-web</title>
+        <title>tix</title>
+        <link rel="icon" href="data:,">
+        <link rel="stylesheet" href="style.css">
+        <script type="importmap">
+            { "imports": {
+              "preact": "./vendor/preact-11.2.0.mjs",
+              "preact/hooks": "./vendor/preact-hooks-11.2.0.mjs",
+              "htm": "./vendor/htm-3.1.1.mjs"
+            } }
+        </script>
     </head>
     <body>
-        <h1>tix</h1>
-        <p id="error"></p>
-        <div id="board">Loading...</div>
-        <script src="app.js"></script>
+        <div id="root"></div>
+        <script type="module" src="app.js"></script>
     </body>
 </html>

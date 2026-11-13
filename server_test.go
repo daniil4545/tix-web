@@ -163,9 +163,17 @@ func TestForeignHostRefused(t *testing.T) {
 
 func TestPageIsEmbedded(t *testing.T) {
 	tix, _ := fakeTix(t)
-	rec := get(t, newServer(tix, "8737"), "127.0.0.1:8737", "/")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<script src="app.js">`) {
+	h := newServer(tix, "8737")
+	rec := get(t, h, "127.0.0.1:8737", "/")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `src="app.js"`) {
 		t.Errorf("index: %d %s", rec.Code, rec.Body)
+	}
+	// A browser refuses an ES module served with a non-JavaScript type.
+	for _, path := range []string{"/app.js", "/vendor/preact-11.2.0.mjs", "/vendor/preact-hooks-11.2.0.mjs", "/vendor/htm-3.1.1.mjs"} {
+		rec := get(t, h, "127.0.0.1:8737", path)
+		if ct := rec.Header().Get("Content-Type"); rec.Code != http.StatusOK || !strings.HasPrefix(ct, "text/javascript") {
+			t.Errorf("%s: %d %q", path, rec.Code, ct)
+		}
 	}
 }
 
