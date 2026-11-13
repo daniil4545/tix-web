@@ -6,7 +6,9 @@
 """Board check in system Chrome on a clone of the task store: no console errors, the panel opens and
 closes, a `tix note` and a `tix move` in the same TIX_HOME show within one poll, and drag and drop
 moves cards through tix: within a column (no prompt in blocked), between columns, into blocked with a reason or cancelled,
-into closed with a result, and a tix refusal shows as a toast with the card back in place.
+into closed with a result, and a tix refusal shows as a toast with the card back in place; the panel
+edits title, tags, criteria and the body (a CLI edit meanwhile is a conflict that keeps the owner's
+text) and sends a comment.
 
 Usage: scripts/browser-check.py [TASKS_DIR] (default ~/tasks; it is cloned, never written).
 Screenshots go to the temporary folder printed at the end.
@@ -21,6 +23,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import Dialog, Page, sync_playwright
@@ -183,6 +186,93 @@ def wait(page: Page, selector: str) -> str:
     return f"{time.monotonic() - start:.1f}s"
 
 
+def until(probe: Callable[[], bool], what: str, failed: list[str], timeout: float = 4) -> None:
+    """Poll probe() for up to timeout seconds; record what when it never turns true."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if probe():
+            return
+        time.sleep(0.2)
+    failed.append(what)
+
+
+def check_edits(page: Page, url: str, env: dict, ids: dict[str, str], out: Path) -> list[str]:
+    a, c = ids["A"], ids["C"]
+    failed: list[str] = []
+    page.locator(f'.card[data-id="{a}"]').click()
+    page.wait_for_selector(".panel .md")
+
+    page.locator(".panel h1.t").click()
+    page.locator(".panel .t-input").fill("browser-check A edited")
+    page.keyboard.press("Enter")
+    until(lambda: task_json(url, a)["title"] == "browser-check A edited", "title not saved", failed)
+
+    page.locator(".panel .prop .editable").click()
+    page.locator(".panel .tags-input").fill("agent:claude, ui")
+    page.keyboard.press("Enter")
+    try:
+        page.wait_for_selector(f'.card[data-id="{a}"] .chip:text-is("agent:claude")', timeout=4000)
+    except PlaywrightTimeout:
+        failed.append("tag agent:claude not on the card")
+
+    page.locator('.panel .md input[data-n="1"]').click()
+    until(lambda: "- [x] one" in task_json(url, a)["body"], "criterion 1 not checked", failed)
+
+    page.locator(".panel textarea.compose").fill("please continue")
+    page.keyboard.press("Meta+Enter" if sys.platform == "darwin" else "Control+Enter")
+    try:
+        page.wait_for_selector('.panel .item.comment:has-text("please continue")', timeout=4000)
+    except PlaywrightTimeout:
+        failed.append("comment not in the feed")
+
+    # Conflict: the CLI edits the body while the editor is open; the owner's text must survive.
+    page.locator('.panel button:text-is("Править")').click()
+    mine = "## Details\n\n- [x] one\n- [ ] from the browser\n"
+    page.locator(".panel textarea.editor").fill(mine)
+    tix(
+        env,
+        "edit",
+        a,
+        "--base",
+        task_json(url, a)["rev"],
+        stdin="## Details\n\n- [x] one\n- [ ] from the cli\n",
+    )
+    page.locator('.panel button:text-is("Сохранить")').click()
+    try:
+        warn = page.wait_for_selector(".panel .warn", timeout=4000).inner_text()
+    except PlaywrightTimeout:
+        warn = ""
+    page.screenshot(path=out / "conflict.png")
+    kept = (
+        page.locator(".panel textarea.editor").count()
+        and page.locator(".panel textarea.editor").input_value() == mine
+    )
+    if "conflict" not in warn or not kept:
+        failed.append(f"conflict: warning {warn!r}, owner text kept: {bool(kept)}")
+        return failed
+    page.locator('.panel button:text-is("Перезаписать поверх новой")').click()
+    until(
+        lambda: "from the browser" in task_json(url, a)["body"],
+        "overwrite did not save the owner text",
+        failed,
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # A refusal: unchecking a criterion of a closed task shows the tix text as a toast.
+    page.locator(f'.card[data-id="{c}"]').click()
+    page.wait_for_selector('.panel .md input[data-n="1"]')
+    page.locator('.panel .md input[data-n="1"]').click()
+    try:
+        toast = page.wait_for_selector(".toast", timeout=4000).inner_text()
+    except PlaywrightTimeout:
+        toast = ""
+    if not toast.startswith("err "):
+        failed.append(f"uncheck on closed: toast {toast!r}")
+    page.keyboard.press("Escape")
+    return failed
+
+
 def check(url: str, env: dict, out: Path) -> int:
     ids = seed(env)
     with urllib.request.urlopen(url + "/api/board") as r:  # noqa: S310 - the local server started above
@@ -242,6 +332,7 @@ def check(url: str, env: dict, out: Path) -> int:
         if seen == "never":
             failed.append(f"{moved} moved by tix did not show within {POLL_S}s")
         failed += check_moves(page, url, ids, out)
+        failed += check_edits(page, url, env, ids, out)
         browser.close()
     failed += [f"console: {e}" for e in errors]
     print(

@@ -306,3 +306,64 @@ func TestCrossOriginWriteRefused(t *testing.T) {
 		t.Errorf("same origin: %d %s", rec.Code, rec.Body)
 	}
 }
+
+func send(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	req.Host = "127.0.0.1:8737"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestWritesRunTix(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body, args string
+	}{
+		{http.MethodPatch, "/api/tasks/T-7", `{"title":"New = title"}`, "set\nT-7\ntitle=New = title\n--as\nhuman\n--\n"},
+		{http.MethodPatch, "/api/tasks/T-7", `{"title":"A","tags":"agent:claude, ui"}`, "set\nT-7\ntitle=A\ntags=agent:claude, ui\n--as\nhuman\n--\n"},
+		{http.MethodPatch, "/api/tasks/T-7", `{"tags":""}`, "set\nT-7\ntags=\n--as\nhuman\n--\n"},
+		{http.MethodPut, "/api/tasks/T-7", `{"rev":"abc1234","body":"## Details\n\n- [ ] one\n"}`, "edit\nT-7\n--base\nabc1234\n--as\nhuman\n--\nstdin:## Details\n\n- [ ] one\n"},
+		{http.MethodPost, "/api/tasks/T-7/check", `{"n":2}`, "check\nT-7\n2\n--as\nhuman\n--\n"},
+		{http.MethodPost, "/api/tasks/T-7/uncheck", `{"n":1}`, "uncheck\nT-7\n1\n--as\nhuman\n--\n"},
+		{http.MethodPost, "/api/tasks/T-7/comment", `{"text":"--force please"}`, "comment\nT-7\n--as\nhuman\n--\n--force please\n--\n"},
+	} {
+		tix, log := fakeTix(t)
+		rec := send(t, newServer(tix, "8737"), tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("%s %s: %d %s", tc.method, tc.body, rec.Code, rec.Body)
+		}
+		if args, _ := os.ReadFile(log); string(args) != tc.args {
+			t.Errorf("%s %s: tix args %q, want %q", tc.method, tc.body, args, tc.args)
+		}
+	}
+}
+
+func TestWriteRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body string
+		code               int
+		msg                string
+	}{
+		{http.MethodPut, "/api/tasks/T-410", `{"rev":"abc1234","body":"x"}`, http.StatusConflict, "err T-410: edit conflict: body changed after tix show, reread and retry"},
+		{http.MethodPut, "/api/tasks/T-7", `{"rev":"--force","body":"x"}`, http.StatusBadRequest, `err T-7: bad rev "--force"`},
+		{http.MethodPut, "/api/tasks/T-7", `{"rev":"abc1234","body":""}`, http.StatusBadRequest, "err T-7: empty body"},
+		{http.MethodPatch, "/api/tasks/T-7", `{}`, http.StatusBadRequest, "err T-7: nothing to set, want title or tags"},
+		{http.MethodPatch, "/api/tasks/T-7", `{"project":"x"}`, http.StatusBadRequest, `err: request body: json: unknown field "project"`},
+		{http.MethodPost, "/api/tasks/T-7/check", `{"n":0}`, http.StatusBadRequest, "err T-7: criterion 0, want 1 or more"},
+		{http.MethodPost, "/api/tasks/T-7/comment", `{"text":"  "}`, http.StatusBadRequest, "err T-7: empty comment"},
+	} {
+		tix, log := fakeTix(t)
+		rec := send(t, newServer(tix, "8737"), tc.method, tc.path, tc.body)
+		var got struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != tc.code || got.Error != tc.msg {
+			t.Errorf("%s %s: %d %q, want %d %q", tc.method, tc.body, rec.Code, got.Error, tc.code, tc.msg)
+		}
+		if args, _ := os.ReadFile(log); tc.code == http.StatusBadRequest && len(args) > 0 {
+			t.Errorf("%s: tix ran on a bad request: %q", tc.body, args)
+		}
+	}
+}

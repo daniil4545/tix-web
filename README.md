@@ -5,8 +5,8 @@ A local web board for the [tix](https://github.com/daniil4545/tix) task tracker:
 
 ## Stage
 
-Prototype. Works: the board with a task panel that polls every 5 s, and moving cards through `tix move`.
-Coming next: editing, new tasks.
+Prototype. Works: the board with a task panel that polls every 5 s, moving cards through `tix move`, and
+editing a task in the panel. Coming next: new tasks.
 
 ## Quick start
 
@@ -29,6 +29,10 @@ Tests and linters: `make check`. The full test tier needs tix 0.9.1; `make test-
 | `GET /api/board` | `tix status`, `tix projects`, `tix list --all --json --project ""` |
 | `GET /api/tasks/T-N` | `tix show T-N -v --json`, plus `body_html` and `html` of each note and comment |
 | `POST /api/tasks/T-N/move` `{status, after, first, message}` | `tix move T-N STATUS --as human [--after T-M \| --first] [-m MESSAGE]`; no placement keeps the tix default, the end of the column |
+| `PATCH /api/tasks/T-N` `{title, tags}` | `tix set T-N title=... tags=... --as human`; tags are one comma-separated string |
+| `PUT /api/tasks/T-N` `{rev, body}` | `tix edit T-N --base REV --as human` with the body on stdin; a changed body is exit 3, HTTP 409 |
+| `POST /api/tasks/T-N/check`, `/uncheck` `{n}` | `tix check` or `tix uncheck T-N N --as human` |
+| `POST /api/tasks/T-N/comment` `{text}` | `tix comment T-N --as human -- TEXT` |
 
 A tix failure comes back as `{"error": "<tix text>", "code": <exit code>}`: exit 3 and 5 are 409,
 4 is 404, 6 is 400, anything else is 500.
