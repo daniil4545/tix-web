@@ -226,6 +226,17 @@ def check_edits(page: Page, url: str, env: dict, ids: dict[str, str], out: Path)
     except PlaywrightTimeout:
         failed.append("comment not in the feed")
 
+    # An unsent comment asks before the close button drops it; a dismissed question keeps the panel.
+    page.locator(".panel textarea.compose").fill("not sent yet")
+    asked = []
+    page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+    page.locator(".panel button.x").click()
+    kept = page.locator(".panel textarea.compose")
+    if not asked or kept.count() == 0 or kept.input_value() != "not sent yet":
+        failed.append(f"close with an unsent comment: asked {asked}, panel or text gone")
+        return failed
+    kept.fill("")
+
     # Conflict: the CLI edits the body while the editor is open; the owner's text must survive.
     page.locator('.panel button:text-is("Править")').click()
     mine = "## Details\n\n- [x] one\n- [ ] from the browser\n"

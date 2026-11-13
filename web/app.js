@@ -9,7 +9,8 @@ const POLL_MS = 5000;
 const CLOSED_LIMIT = 12;
 const NOTICE_MS = 6000;
 
-// drag.active holds the board poll while a card is in the air: a redraw mid-drag loses the drop.
+// drag.active holds the board poll while a card is in the air, and drops an answer that lands
+// mid-drag: a redraw mid-drag loses the drop.
 const drag = { active: false };
 
 // api calls the server; a refusal throws with the tix text and its exit code.
@@ -150,7 +151,7 @@ function App() {
     () =>
       drag.active
         ? Promise.resolve()
-        : newest(seq, () => api("/api/board"), (b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
+        : newest(seq, () => api("/api/board"), (b) => drag.active || (setBoard(b), setError("")), (e) => setError(e.message)),
     [],
   );
   usePoll(load);
@@ -287,9 +288,10 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
     if (t && md.current) markCriteria(md.current, t.body);
   });
 
-  // An unsaved body is not lost to Esc or a click outside.
+  // An unsaved body or comment is not lost to Esc, a click outside or the close button.
   const close = () => {
-    if (draft && draft.body !== t?.body && !confirm("Закрыть без сохранения правки?")) return;
+    const dirty = (draft && draft.body !== t?.body) || comment.trim();
+    if (dirty && !confirm("Закрыть без сохранения правки?")) return;
     onClose();
   };
   useEsc(close);
