@@ -165,6 +165,7 @@ button, input { font: inherit; color: inherit; }
 
 .crumb { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: 0 0 8px -6px; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb:hover { background: var(--col); color: var(--text); }
+span.crumb { cursor: default; background: none; color: var(--muted); }
 .kids { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--card); }
 .kid { display: flex; align-items: center; gap: 9px; padding: 7px 12px; border: 0; border-top: 1px solid var(--border); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .kid:first-child { border-top: 0; }

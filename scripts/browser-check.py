@@ -311,6 +311,15 @@ def check_epic(page: Page, env: dict, out: Path) -> list[str]:
         page.screenshot(path=out / "epic.png")
         page.locator(f'.panel .kid[data-id="{kid}"]').click()
         page.wait_for_selector(f'.panel .panel-head .mono:text-is("{kid}")', timeout=4000)
+        # An unsent comment asks before the jump; a dismissed question keeps the child open.
+        page.locator(".panel textarea.compose").fill("not sent yet")
+        asked: list[str] = []
+        page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+        page.locator(".panel .crumb").click()
+        page.wait_for_timeout(300)
+        if not asked or page.locator(f'.panel .panel-head .mono:text-is("{kid}")').count() == 0:
+            failed.append(f"jump to the epic with an unsent comment: asked {asked}, child gone")
+        page.locator(".panel textarea.compose").fill("")
         page.locator(".panel .crumb").click()
         page.wait_for_selector(f'.panel .panel-head .mono:text-is("{epic}")', timeout=4000)
     except PlaywrightTimeout:

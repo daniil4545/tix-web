@@ -364,8 +364,9 @@ function Panel({ id, statuses, tasks, onOpen, onClose, onChanged, onNotice }) {
       ${error && html`<div class="panel-head">${error}</div>`}
       ${t && html`<div class="panel-body">
         <div class="doc">
-          ${t.parent && html`<button class="crumb" onClick=${() => go(t.parent)}>в эпике <span class="mono">${t.parent}</span>
-            ${parent?.title}</button>`}
+          ${t.parent && (parent
+            ? html`<button class="crumb" onClick=${() => go(t.parent)}>в эпике <span class="mono">${t.parent}</span> ${parent.title}</button>`
+            : html`<span class="crumb">в эпике <span class="mono">${t.parent}</span></span>`)}
           ${title === null
             ? html`<h1 class="t editable" title="Изменить заголовок" onClick=${() => setTitle(t.title)}>${t.title}</h1>`
             : html`<input class="t-input" ref=${focus} value=${title} onInput=${(e) => setTitle(e.target.value)}
