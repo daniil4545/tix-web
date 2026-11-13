@@ -10,7 +10,7 @@ Coming next: the board and the task panel, moving cards, editing, new tasks.
 
 ## Quick start
 
-Requirements: Go 1.27.2 or newer, tix 0.9.1 in `PATH`.
+Requirements: Go 1.27.4 or newer, tix 0.9.1 in `PATH`.
 
 1. `go install github.com/daniil4545/tix-web@latest`
 2. `tix-web` prints `tix-web: http://127.0.0.1:8737`
