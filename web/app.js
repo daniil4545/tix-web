@@ -27,18 +27,21 @@ async function postJSON(url, body) {
   throw new Error(data.error || `HTTP ${res.status}`);
 }
 
-// moveBody asks what tix needs for the target kind; null means the owner cancelled.
+// moveBody asks what tix needs for the target kind; null means the owner cancelled. A reorder within
+// the same column asks nothing: a new reason or result would overwrite the old one.
 // Closed keeps tix placement (the end, shown first); other columns keep the drop position.
-function moveBody(kind, after) {
+function moveBody(kind, after, same) {
+  const place = after ? { after } : { first: true };
+  if (same) return place;
   if (kind === "blocked") {
     const reason = prompt("Причина блокировки");
-    return reason ? { message: reason, ...(after ? { after } : { first: true }) } : null;
+    return reason ? { message: reason, ...place } : null;
   }
   if (kind === "closed") {
     const result = prompt("Итог (можно оставить пустым)");
     return result === null ? null : { message: result };
   }
-  return after ? { after } : { first: true };
+  return place;
 }
 
 // usePoll runs load now, every POLL_MS while the tab is visible, and when the tab comes back.
@@ -94,13 +97,15 @@ function App() {
   const [more, setMore] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(
-    () =>
-      drag.active
-        ? Promise.resolve()
-        : getJSON("/api/board").then((b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
-    [],
-  );
+  // Only the newest board request is applied: a poll held during a prompt may answer after the
+  // read that follows the move.
+  const seq = useRef(0);
+  const load = useCallback(() => {
+    if (drag.active) return Promise.resolve();
+    const n = ++seq.current;
+    const fresh = (f) => (x) => n === seq.current && f(x);
+    return getJSON("/api/board").then(fresh((b) => { setBoard(b); setError(""); }), fresh((e) => setError(e.message)));
+  }, []);
   usePoll(load);
 
   useEffect(() => {
@@ -111,7 +116,8 @@ function App() {
 
   async function move(id, status, after) {
     const kind = board.statuses.find((s) => s.name === status)?.kind;
-    const body = moveBody(kind, after);
+    const same = board.tasks.find((t) => t.id === id)?.status === status;
+    const body = moveBody(kind, after, same);
     if (!body) return;
     try {
       await postJSON(`/api/tasks/${encodeURIComponent(id)}/move`, { status, ...body });

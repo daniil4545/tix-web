@@ -5,7 +5,7 @@
 # ///
 """Board check in system Chrome on a clone of the task store: no console errors, the panel opens and
 closes, a `tix note` and a `tix move` in the same TIX_HOME show within one poll, and drag and drop
-moves cards through tix: within a column, between columns, into blocked with a reason or cancelled,
+moves cards through tix: within a column (no prompt in blocked), between columns, into blocked with a reason or cancelled,
 into closed with a result, and a tix refusal shows as a toast with the card back in place.
 
 Usage: scripts/browser-check.py [TASKS_DIR] (default ~/tasks; it is cloned, never written).
@@ -23,7 +23,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Dialog, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -136,6 +136,21 @@ def check_moves(page: Page, url: str, ids: dict[str, str], out: Path) -> list[st
     drag(page, b, '.col[data-status="blocked"] .cards')
     if not first_in(page, "blocked", b) or task_json(url, b)["waiting"] != "waits on review":
         failed.append(f"open > blocked: {b} not blocked with the reason")
+    # A reorder inside blocked keeps the reason: no prompt, waiting unchanged.
+    second = page.locator('.col[data-status="blocked"] .card').nth(1).get_attribute("data-id")
+    waiting = task_json(url, second)["waiting"]
+    asked: list[str] = []
+
+    def no_prompt(d: Dialog) -> None:
+        asked.append(d.message)
+        d.dismiss()
+
+    page.on("dialog", no_prompt)
+    drag(page, second, '.col[data-status="blocked"] .card')
+    landed = first_in(page, "blocked", second)
+    page.remove_listener("dialog", no_prompt)
+    if asked or not landed or task_json(url, second)["waiting"] != waiting:
+        failed.append(f"reorder in blocked: asked {asked}, first {landed}, waiting changed")
     page.once("dialog", lambda d: d.dismiss())
     drag(page, a, '.col[data-status="blocked"] .cards')
     page.wait_for_timeout(800)
