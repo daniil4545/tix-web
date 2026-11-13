@@ -5,8 +5,8 @@ A local web board for the [tix](https://github.com/daniil4545/tix) task tracker:
 
 ## Stage
 
-Prototype. Works: the read API and a read-only board with a task panel that polls every 5 s.
-Coming next: moving cards, editing, new tasks.
+Prototype. Works: the board with a task panel that polls every 5 s, and moving cards through `tix move`.
+Coming next: editing, new tasks.
 
 ## Quick start
 
@@ -28,6 +28,7 @@ Tests and linters: `make check`. The full test tier needs tix 0.9.1; `make test-
 |---|---|
 | `GET /api/board` | `tix status`, `tix projects`, `tix list --all --json --project ""` |
 | `GET /api/tasks/T-N` | `tix show T-N -v --json`, plus `body_html` and `html` of each note and comment |
+| `POST /api/tasks/T-N/move` `{status, after, first, message}` | `tix move T-N STATUS --as human [--after T-M \| --first] [-m MESSAGE]`; no placement keeps the tix default, the end of the column |
 
 A tix failure comes back as `{"error": "<tix text>", "code": <exit code>}`: exit 3 and 5 are 409,
 4 is 404, 6 is 400, anything else is 500.
@@ -35,6 +36,7 @@ A tix failure comes back as `{"error": "<tix text>", "code": <exit code>}`: exit
 ## Security
 
 - Listens on 127.0.0.1 only and answers only to `Host` 127.0.0.1:PORT or localhost:PORT (DNS rebinding).
+- Writes from another origin are refused (`http.CrossOriginProtection`).
 - Markdown is rendered on the server by goldmark without raw HTML, so a `<script>` in a task stays text.
 - tix runs with an argument array, never through a shell; the server never touches task files itself.
 

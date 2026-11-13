@@ -25,7 +25,7 @@ Go standard library, `go:embed` for `web/`, goldmark for Markdown. Versions are 
 | `server.go` | routes, Host check, JSON and Markdown |
 | `tix.go` | running tix, exit codes, parsing `tix status` and `tix projects` text |
 | `web/` | the page (Preact + htm, spike A styles), embedded into the binary |
-| `web/vendor/` | front-end libraries, version in the file name, licenses next to them (preact MIT, htm Apache 2.0) |
+| `web/vendor/` | front-end libraries, version in the file name, licenses next to them (preact and SortableJS MIT, htm Apache 2.0) |
 | `testdata/fake-tix.sh` | fake tix of the fast tier, logs its arguments |
 | `scripts/browser-check.py` | Playwright check of the board on a clone of the task store |
 
