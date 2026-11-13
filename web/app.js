@@ -291,7 +291,7 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
   // An unsaved body or comment is not lost to Esc, a click outside or the close button.
   const close = () => {
     const dirty = (draft && draft.body !== t?.body) || comment.trim();
-    if (dirty && !confirm("Закрыть без сохранения правки?")) return;
+    if (dirty && !confirm("Закрыть? Несохранённый текст пропадёт")) return;
     onClose();
   };
   useEsc(close);
