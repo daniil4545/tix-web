@@ -1,5 +1,4 @@
-// Board: columns in `tix status` order, drag and drop through `tix move`, a task panel, polling.
-// Styles are spike A as is. After every write the board is read again: tix decides, the page shows.
+// Board over tix: after every write the board is read again, tix decides and the page shows.
 // Task text reaches the DOM as text, except body and feed HTML that the server renders without raw HTML.
 import { h, render } from "preact";
 import { useState, useEffect, useCallback, useRef } from "preact/hooks";
@@ -13,19 +12,14 @@ const NOTICE_MS = 6000;
 // drag.active holds the board poll while a card is in the air: a redraw mid-drag loses the drop.
 const drag = { active: false };
 
-async function getJSON(url) {
-  const res = await fetch(url);
+// api calls the server; a refusal throws with the tix text and its exit code.
+async function api(url, method = "GET", body = undefined) {
+  const init = body === undefined ? { method } : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const res = await fetch(url, init);
+  if (res.status === 204) return undefined;
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { code: data.code });
   return data;
-}
-
-// sendJSON writes through the server; a refusal throws with the tix text and its exit code.
-async function sendJSON(url, body, method = "POST") {
-  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (res.ok) return;
-  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-  throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { code: data.code });
 }
 
 // criteriaCount counts criteria the way tix does: `- [ ]` lines under "## Details", outside code blocks.
@@ -108,6 +102,15 @@ function usePoll(load) {
   }, [load]);
 }
 
+// useEsc closes an overlay on Esc; a field stops its own Esc first with stopEsc.
+function useEsc(close) {
+  useEffect(() => {
+    const key = (e) => e.key === "Escape" && close();
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  });
+}
+
 function ago(at) {
   const m = Math.round((Date.now() - new Date(at).getTime()) / 60000);
   if (m < 1) return "сейчас";
@@ -147,7 +150,7 @@ function App() {
     () =>
       drag.active
         ? Promise.resolve()
-        : newest(seq, () => getJSON("/api/board"), (b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
+        : newest(seq, () => api("/api/board"), (b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
     [],
   );
   usePoll(load);
@@ -164,7 +167,7 @@ function App() {
     const body = moveBody(kind, after, same);
     if (!body) return;
     try {
-      await sendJSON(`/api/tasks/${encodeURIComponent(id)}/move`, { status, ...body });
+      await api(`/api/tasks/${encodeURIComponent(id)}/move`, "POST", { status, ...body });
     } catch (err) {
       setNotice(err.message);
     }
@@ -275,7 +278,7 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
   const url = `/api/tasks/${encodeURIComponent(id)}`;
   const seq = useRef(0);
   const load = useCallback(
-    () => newest(seq, () => getJSON(url), (x) => { setT(x); setError(""); }, (e) => setError(e.message)),
+    () => newest(seq, () => api(url), (x) => { setT(x); setError(""); }, (e) => setError(e.message)),
     [url],
   );
   usePoll(load);
@@ -289,16 +292,12 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
     if (draft && draft.body !== t?.body && !confirm("Закрыть без сохранения правки?")) return;
     onClose();
   };
-  useEffect(() => {
-    const key = (e) => e.key === "Escape" && close();
-    document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
-  });
+  useEsc(close);
 
   // change sends one write; a refusal goes to the toast. The task and the board are read again either way.
   async function change(method, path, body) {
     try {
-      await sendJSON(url + path, body, method);
+      await api(url + path, method, body);
       return true;
     } catch (err) {
       onNotice(err.message);
@@ -317,14 +316,14 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
   // saveBody keeps the owner's text on a refusal; a conflict (tix exit 3) offers to save over the newer body.
   async function saveBody(rev) {
     try {
-      await sendJSON(url, { rev, body: draft.body }, "PUT");
+      await api(url, "PUT", { rev, body: draft.body });
       setDraft(null);
     } catch (err) {
       setDraft((d) => ({ ...d, error: err.message, conflict: err.code === 3 }));
     }
     await Promise.all([load(), onChanged()]);
   }
-  const overwrite = async () => saveBody((await getJSON(url)).rev);
+  const overwrite = async () => saveBody((await api(url)).rev);
 
   // One comment per send: a held Cmd+Enter or a double click must not repeat an instruction to the agent.
   const sending = useRef(false);
@@ -419,20 +418,13 @@ function NewTask({ board, onClose, onCreated }) {
     const dirty = form.title.trim() || form.body !== TEMPLATE;
     if (!dirty || confirm("Закрыть без создания задачи?")) onClose();
   };
-  useEffect(() => {
-    const key = (e) => e.key === "Escape" && close();
-    document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
-  });
+  useEsc(close);
 
   async function submit() {
     if (busy || !form.title.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      onCreated(data.id);
+      onCreated((await api("/api/tasks", "POST", form)).id);
     } catch (err) {
       setError(err.message);
     } finally {
