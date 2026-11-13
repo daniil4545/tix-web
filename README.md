@@ -5,8 +5,8 @@ A local web board for the [tix](https://github.com/daniil4545/tix) task tracker:
 
 ## Stage
 
-Prototype. Works: the server, the read API and a placeholder page that lists tasks by status.
-Coming next: the board and the task panel, moving cards, editing, new tasks.
+Prototype. Works: the read API and a read-only board with a task panel that polls every 5 s.
+Coming next: moving cards, editing, new tasks.
 
 ## Quick start
 
@@ -20,6 +20,7 @@ Flags: `-addr 127.0.0.1:PORT` (only 127.0.0.1 is accepted), `-tix PATH` for a ti
 `PATH`. The store is the one tix uses: `TIX_HOME`, `~/tasks` by default.
 
 Tests and linters: `make check`. The full test tier needs tix 0.9.1; `make test-fast` runs on a fake.
+`make browser-check` drives the board in system Chrome on a clone of `~/tasks` (needs uv).
 
 ## API
 

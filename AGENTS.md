@@ -24,8 +24,10 @@ Go standard library, `go:embed` for `web/`, goldmark for Markdown. Versions are 
 | `main.go` | flags, startup checks, listener |
 | `server.go` | routes, Host check, JSON and Markdown |
 | `tix.go` | running tix, exit codes, parsing `tix status` and `tix projects` text |
-| `web/` | the page, embedded into the binary |
+| `web/` | the page (Preact + htm, spike A styles), embedded into the binary |
+| `web/vendor/` | front-end libraries, version in the file name, licenses next to them (preact MIT, htm Apache 2.0) |
 | `testdata/fake-tix.sh` | fake tix of the fast tier, logs its arguments |
+| `scripts/browser-check.py` | Playwright check of the board on a clone of the task store |
 
 ## Commands
 
@@ -34,6 +36,7 @@ Go standard library, `go:embed` for `web/`, goldmark for Markdown. Versions are 
 | fast tests (fake tix) | `make test-fast` |
 | all tests (needs tix 0.9.1) | `make test` |
 | linters | `make lint` |
+| board in a browser (local only) | `make browser-check` |
 | run | `make build && bin/tix-web` |
 | before a PR | `make pr-check` |
 

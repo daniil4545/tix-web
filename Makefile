@@ -1,6 +1,6 @@
 # Gate of ~/.claude/templates/Makefile.go without a database and paid runs. GitHub flow: the base is main.
 # Needs go, golangci-lint, uv and node; the full tier also needs tix 0.9.1 in PATH.
-.PHONY: build test test-fast vet fmt fmt-check golangci infra-check lint secrets security test-guard pr-size check push-check pr-check ci-check
+.PHONY: build test test-fast vet fmt fmt-check golangci infra-check lint secrets security test-guard pr-size check push-check pr-check ci-check browser-check
 
 GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
 GITLEAKS := go run github.com/zricethezav/gitleaks/v8@v8.30.1
@@ -57,6 +57,10 @@ test-guard:
 # Lines of code a PR carries, limit 400; PR_SIZE_MAX raises it.
 pr-size:
 	scripts/pr-size.py --base $(BASE)
+
+# The board in system Chrome on a clone of ~/tasks (uv, Playwright); local only, not in CI.
+browser-check:
+	scripts/browser-check.py
 
 # Acceptance: static checks, both tiers, build.
 check: lint test build
