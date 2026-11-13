@@ -80,6 +80,14 @@ function moveBody(kind, after, same) {
   return place;
 }
 
+// newest runs a request and applies its answer only when no newer one started meanwhile: a poll
+// that answers late must not roll back what the read after a write showed.
+function newest(seq, request, ok, fail) {
+  const n = ++seq.current;
+  const fresh = (f) => (x) => n === seq.current && f(x);
+  return request().then(fresh(ok), fresh(fail));
+}
+
 // usePoll runs load now, every POLL_MS while the tab is visible, and when the tab comes back.
 // One request at a time: a slow tix answer can neither overlap nor overwrite a newer one.
 function usePoll(load) {
@@ -133,15 +141,14 @@ function App() {
   const [more, setMore] = useState(false);
   const [notice, setNotice] = useState("");
 
-  // Only the newest board request is applied: a poll held during a prompt may answer after the
-  // read that follows the move.
   const seq = useRef(0);
-  const load = useCallback(() => {
-    if (drag.active) return Promise.resolve();
-    const n = ++seq.current;
-    const fresh = (f) => (x) => n === seq.current && f(x);
-    return getJSON("/api/board").then(fresh((b) => { setBoard(b); setError(""); }), fresh((e) => setError(e.message)));
-  }, []);
+  const load = useCallback(
+    () =>
+      drag.active
+        ? Promise.resolve()
+        : newest(seq, () => getJSON("/api/board"), (b) => { setBoard(b); setError(""); }, (e) => setError(e.message)),
+    [],
+  );
   usePoll(load);
 
   useEffect(() => {
@@ -261,8 +268,9 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
   const [comment, setComment] = useState("");
   const md = useRef();
   const url = `/api/tasks/${encodeURIComponent(id)}`;
+  const seq = useRef(0);
   const load = useCallback(
-    () => getJSON(url).then((x) => { setT(x); setError(""); }, (e) => setError(e.message)),
+    () => newest(seq, () => getJSON(url), (x) => { setT(x); setError(""); }, (e) => setError(e.message)),
     [url],
   );
   usePoll(load);
@@ -313,9 +321,17 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
   }
   const overwrite = async () => saveBody((await getJSON(url)).rev);
 
+  // One comment per send: a held Cmd+Enter or a double click must not repeat an instruction to the agent.
+  const sending = useRef(false);
   async function sendComment() {
     const text = comment.trim();
-    if (text && (await change("POST", "/comment", { text }))) setComment("");
+    if (!text || sending.current) return;
+    sending.current = true;
+    try {
+      if (await change("POST", "/comment", { text })) setComment("");
+    } finally {
+      sending.current = false;
+    }
   }
 
   const onBodyClick = (e) => {
@@ -359,7 +375,7 @@ function Panel({ id, statuses, onClose, onChanged, onNotice }) {
             <div class=${it.type === "comment" ? "bubble md" : "md"} dangerouslySetInnerHTML=${{ __html: it.html }}></div></div></div>`)}</div>
           <textarea class="compose" placeholder="Комментарий агенту. Cmd+Enter отправляет" value=${comment}
             onInput=${(e) => setComment(e.target.value)}
-            onKeyDown=${(e) => ((e.metaKey || e.ctrlKey) && e.key === "Enter" ? sendComment() : stopEsc(e))}></textarea>
+            onKeyDown=${(e) => ((e.metaKey || e.ctrlKey) && e.key === "Enter" ? e.repeat || sendComment() : stopEsc(e))}></textarea>
           <div class="actions"><button class="btn" disabled=${!comment.trim()} onClick=${sendComment}>Отправить</button></div>
         </div>
         <div class="props">
